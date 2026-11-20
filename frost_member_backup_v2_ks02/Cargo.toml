@@ -1,0 +1,27 @@
+[package]
+name = "frost-member-backup-v2-vectors"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "MIT OR Apache-2.0"
+
+# Standalone: its own workspace, so it never joins the repository's workspace or Cargo.lock.
+[workspace]
+
+[dependencies]
+orchard = { version = "=0.16.0", default-features = false, features = ["std", "unstable-frost"] }
+reddsa = { version = "=0.5.2", features = ["frost"] }
+frost-rerandomized = "=3.0.0"
+rand_core = "0.6"
+rand_chacha = "0.3"
+bech32 = "0.11"
+blake2b_simd = "1"
+pasta_curves = "0.5"
+ff = "0.13"
+group = "0.13"
+zcash_address = "=0.14.0"
+zcash_protocol = "=0.11.0"
+pasta06 = { package = "pasta_curves", version = "0.6" }
+ff14 = { package = "ff", version = "0.14" }
+hex = "0.4"
+serde_json = { version = "1", features = ["preserve_order"] }
