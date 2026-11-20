@@ -287,21 +287,28 @@ fn decode(s: &str) -> Result<Payload, Rej> {
     if p.first() != Some(&VERSION_2) {
         return Err((3, "unsupported version"));
     }
-    // A payload too short to hold the three bytes cannot be told apart by value; the text does not
-    // say (README, "Ambiguities"). Treated as an unknown key source, network or identifier form.
+    // Rule 4 checks only the bytes the payload has (the author's answer, issuecomment-7047445915):
+    // an unknown value that is present wins; a payload that ends before a byte rule 4 reads has
+    // no unknown value to report and fails rule 5 (length).
+    if let Some(&ks) = p.get(1) {
+        if ![KS_ZIP2005, KS_LEGACY, KS_VIEWING_KEY_ONLY].contains(&ks) {
+            return Err((4, "unknown key source"));
+        }
+    }
+    if let Some(&net) = p.get(2) {
+        if ![NET_MAINNET, NET_TESTNET, NET_REGTEST].contains(&net) {
+            return Err((4, "unknown network"));
+        }
+    }
+    if let Some(&form) = p.get(5) {
+        if form != ID_SHORT && form != ID_FULL {
+            return Err((4, "unknown identifier form"));
+        }
+    }
     if p.len() < 6 {
-        return Err((4, "unknown key source, network or identifier form"));
+        return Err((5, "wrong payload length"));
     }
     let (ks, net, t, n, form) = (p[1], p[2], p[3], p[4], p[5]);
-    if ![KS_ZIP2005, KS_LEGACY, KS_VIEWING_KEY_ONLY].contains(&ks) {
-        return Err((4, "unknown key source"));
-    }
-    if ![NET_MAINNET, NET_TESTNET, NET_REGTEST].contains(&net) {
-        return Err((4, "unknown network"));
-    }
-    if form != ID_SHORT && form != ID_FULL {
-        return Err((4, "unknown identifier form"));
-    }
     if Some(p.len()) != expected_len(ks, form) {
         return Err((5, "wrong payload length"));
     }
@@ -988,7 +995,10 @@ fn main() {
         rej(enc(&net3_t1), 4, "unknown network", "two rules: network 0x03 AND threshold 1; the unknown value is first in order"),
         rej(enc(&form2_id0), 4, "unknown identifier form", "two rules: identifier form 0x02 AND identifier byte 0; the unknown value is first in order"),
         rej(enc(&all_unknown), 4, "unknown key source", "key source 0x03, network 0x03 and identifier form 0x02 together"),
+        rej(enc(&[0x02, 0x07]), 4, "unknown key source", "payload `02 07`: key source 7 is present and unknown, and wins over the length"),
         // ---- rule 5: exact length ----
+        rej(enc(&[0x02]), 5, "wrong payload length", "payload `02` alone: it ends before the key source, so rule 4 has nothing to check"),
+        rej(enc(&[0x02, 0x02, 0x01]), 5, "wrong payload length", "payload `02 02 01`: known key source and network, but it ends before the identifier form"),
         rej(enc(&with_sk), 5, "wrong payload length", "key source 0x02 with a 32-byte sk field before the viewing key (171 bytes)"),
         rej(enc(&ak_only), 5, "wrong payload length", "key source 0x02 with a 32-byte ak instead of the 96-byte viewing key (75 bytes)"),
         rej(enc(&ks1_no_sk), 5, "wrong payload length", "key source 0x01 on a 139-byte payload with no sk"),
@@ -1331,7 +1341,16 @@ mod tests {
         assert_eq!(dec_err(&bytes_with(&f, &|b| b[1] = 3)), (4, "unknown key source"));
         assert_eq!(dec_err(&bytes_with(&f, &|b| b[2] = 3)), (4, "unknown network"));
         assert_eq!(dec_err(&bytes_with(&f, &|b| b[5] = 2)), (4, "unknown identifier form"));
-        assert_eq!(dec_err(&[0x02, 0x02]), (4, "unknown key source, network or identifier form"));
+    }
+
+    #[test]
+    fn rule4_only_checks_the_bytes_present() {
+        // a payload that ends before a byte rule 4 reads fails rule 5, not rule 4
+        assert_eq!(dec_err(&[0x02]), (5, "wrong payload length"));
+        assert_eq!(dec_err(&[0x02, 0x02, 0x01]), (5, "wrong payload length"));
+        // an unknown value that is present still wins over the length
+        assert_eq!(dec_err(&[0x02, 0x07]), (4, "unknown key source"));
+        assert_eq!(dec_err(&[0x02, 0x02, 0x07]), (4, "unknown network"));
     }
 
     #[test]

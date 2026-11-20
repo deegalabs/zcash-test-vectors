@@ -8,6 +8,11 @@ by the ZIP editors. If it changes, regenerate.
 Key source `0x02` means "viewing key only (no sk)". The string carries the raw Orchard full viewing
 key `ak || nk || rivk` and no `sk`, so it cannot recover the group's notes under ZIP 2005.
 
+Revised 2026-11-20 after the author's answer (issuecomment-7047445915): rule 4 checks only the bytes
+the payload has, so a payload that ends before a byte rule 4 reads fails rule 5; three decoding
+vectors pin it (`02` alone: rule 5; `02 02 01`: rule 5; `02 07`: rule 4). He also confirmed our
+reading of the prefix case. Decoding cases went from 52 to 55; nothing else changed.
+
 ## What changed since the first version
 
 The first version was built on the text of 2026-11-18. The author's answers (his numbering) and what
@@ -47,7 +52,7 @@ wallet's network. Steps 1 to 5 are the text's; step 6 is the SHOULD above.
 | | first version | this version |
 |---|---|---|
 | valid strings (main file) | 9 | 9, **identical rows** |
-| decoding cases | 32 (6 decode, 26 rejected) | 52 (9 decode, 43 rejected) |
+| decoding cases | 32 (6 decode, 26 rejected) | 55 (9 decode, 46 rejected) |
 | restore cases | 12 (4 accepted, 8 rejected) | 24 (6 accepted, 18 rejected) |
 
 The seed is unchanged on purpose, so every valid vector is the same byte for byte. Only the header
@@ -67,7 +72,7 @@ Output files (the row-per-line JSON layout of zcash/zcash-test-vectors, as in #1
 | File | Rows |
 |---|---|
 | `frost_member_backup_v2_ks02.json` | 9 valid strings, with every input and intermediate value |
-| `frost_member_backup_v2_ks02_decoding.json` | 52 strings: 9 that decode, 43 that decoders must reject. Columns `encoding, payload, rule, reason` (`rule` is the decoding rule 1 to 7, null if it decodes) |
+| `frost_member_backup_v2_ks02_decoding.json` | 55 strings: 9 that decode, 46 that decoders must reject. Columns `encoding, payload, rule, reason` (`rule` is the decoding rule 1 to 7, null if it decodes) |
 | `frost_member_backup_v2_ks02_restore.json` | 24 strings: 6 the restore accepts, 18 it must reject. Columns `encoding, wallet_network, verifying_share, fvk, step, reason` (`step` is the restore step 1 to 5, null if accepted) |
 
 Where these files differ from #136's shape (because of what version 2 adds): the main file has
@@ -152,7 +157,9 @@ at 43 / 74 and `ak` at 75 / 106.
 1. not valid Bech32m (including mixed case), or leftover bits more than 4 or not all zero;
 2. human-readable part not `zkfrost`;
 3. format version not `0x02`;
-4. key source, network or identifier form not a known value;
+4. key source, network or identifier form not a known value (only the bytes the payload has are
+   checked: a payload that ends before one of them fails rule 5, and an unknown value that is present
+   wins over the length);
 5. payload not exactly the length its key source and identifier form give;
 6. t < 2 or t > n;
 7. identifier 0; or, in the full form, not a canonical Pallas scalar or an integer from 1 to 255.
@@ -172,9 +179,17 @@ Step 1 is reported as step 1 for any decoding rejection; the file's `reason` nam
 
 ## Ambiguities met while implementing the revised text
 
-- A payload shorter than 6 bytes (its key source, network or identifier form cannot be read): the
-  text gives no rule for it. The generator treats it as rule 4 (unknown values). No vector, since the
-  text does not settle it.
+Settled by the author on 2026-11-20 (issuecomment-7047445915), no longer open:
+
+- A payload too short for rule 4: rule 4 checks only the bytes the payload has, and a payload that
+  ends before a byte it reads fails rule 5. Three vectors pin it: `02` alone and `02 02 01` fail
+  rule 5, `02 07` fails rule 4 (key source 7).
+- Case of the prefix: the human-readable part is compared case-insensitively and a string in mixed
+  case fails rule 1, as Bech32m requires. The author confirmed it, so our uppercase vector (decodes)
+  and the mixed-case vectors (rule 1) stand. No code changed for this.
+
+Still open:
+
 - Rule 4 lists three checks as one rule and does not order them among themselves. Vectors break one
   at a time and one vector breaks all three; the generator reports the key source first.
 - Step 5 of the restore is a SHOULD, but the vectors give a mismatch a rejection. A wallet that
@@ -188,7 +203,7 @@ Step 1 is reported as step 1 for any decoding rejection; the file's `reason` nam
 
 ```
 cargo run --release -- out             # writes the three JSON files and prints every check
-cargo test --release                   # 11 tests: offsets, each rule, the order, each restore step
+cargo test --release                   # 12 tests: offsets, each rule, the order, each restore step
 cargo run --release -- --red-check     # each check as built, then with one byte changed
 python3 -I crosscheck.py <zcash-test-vectors checkout> out
 ```

@@ -101,8 +101,11 @@ def py_rule(s):
         return 2, None
     if p[:1] != b"\x02":
         return 3, None
-    if len(p) < 6 or p[1] > 2 or p[2] > 2 or p[5] > 1:
+    # rule 4 checks only the bytes the payload has; a payload that ends before one fails rule 5
+    if (len(p) > 1 and p[1] > 2) or (len(p) > 2 and p[2] > 2) or (len(p) > 5 and p[5] > 1):
         return 4, None
+    if len(p) < 6:
+        return 5, None
     if len(p) != LENGTHS[(p[1], p[5])]:
         return 5, None
     t, n = p[3], p[4]
