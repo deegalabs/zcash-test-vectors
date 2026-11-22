@@ -1,6 +1,6 @@
 //! Provisional test vectors for key source 0x02 ("viewing key only, no sk") of the FROST member
 //! backup string, version 2, as written in zcash/zips#1413 (the draft owner's comment of 2026-11-18,
-//! revised in his comment of 2026-11-20, which this generator follows). That payload is a proposal
+//! revised in his comments of 2026-11-20 and 2026-11-21; this generator follows the 2026-11-21 text). That payload is a proposal
 //! for discussion: it is not part of zcash/zips#1432 and has not been answered by the ZIP editors.
 //! Regenerate these vectors if the payload changes.
 //!
@@ -25,7 +25,7 @@ use reddsa::frost::redpallas::{
 };
 
 // ---------------------------------------------------------------------------------------------
-// Constants of the proposed version 2 payload (zips#1413, revised text of 2026-11-20)
+// Constants of the proposed version 2 payload (zips#1413, revised text of 2026-11-21)
 // ---------------------------------------------------------------------------------------------
 
 const HRP: &str = "zkfrost";
@@ -35,7 +35,9 @@ const KS_LEGACY: u8 = 0x01;
 const KS_VIEWING_KEY_ONLY: u8 = 0x02;
 const NET_MAINNET: u8 = 0x00;
 const NET_TESTNET: u8 = 0x01;
-const NET_REGTEST: u8 = 0x02;
+/// Not a network value since the text of 2026-11-21 (Regtest has no value of its own: ZIPs do not
+/// specify regtest). Kept as a name only for the vectors that show 0x02 now fails rule 4.
+const NET_FORMER_REGTEST: u8 = 0x02;
 const ID_SHORT: u8 = 0x00;
 const ID_FULL: u8 = 0x01;
 
@@ -45,7 +47,7 @@ const BIRTHDAY_MAINNET: u32 = 3_543_405;
 const BIRTHDAY_TESTNET: u32 = 4_465_026;
 
 /// The seed every random value in this file is derived from (see `seeded_rng`). Deliberately NOT
-/// changed for the 2026-11-20 revision (the date in it is that of the first payload text), so every
+/// changed for the 2026-11-20 and 2026-11-21 revisions (the date in it is that of the first payload text), so every
 /// valid vector of the first version is reproduced byte for byte.
 const SEED_TAG: &str = "zips#1413 v2 key source 0x02 synthetic 2-of-3 (payload of 2026-11-18)";
 
@@ -212,7 +214,7 @@ fn bech32m_decode(s: &str) -> Result<(String, Vec<u8>), &'static str> {
 }
 
 // ---------------------------------------------------------------------------------------------
-// The payload, as written on 2026-11-18
+// The payload, as written on 2026-11-18 and revised on 2026-11-20 and 2026-11-21
 // ---------------------------------------------------------------------------------------------
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -265,38 +267,43 @@ fn is_canonical_scalar(b: &[u8; 32]) -> bool {
 }
 
 /// A rejection: the number of the rule that fired (decoding rules 1-7, or restore steps 1-5, as
-/// numbered in the text of 2026-11-20) and a short name for it.
+/// numbered in the text of 2026-11-21) and a short name for it.
 type Rej = (u8, &'static str);
 
-/// Decoding, rejections in the order the text of 2026-11-20 gives:
+/// Decoding, rejections in the order the text of 2026-11-21 gives:
 ///  1. not valid Bech32m (including mixed case), or leftover bits more than 4 or not all zero;
-///  2. human-readable part not `zkfrost`;
+///  2. human-readable part, compared without regard to case, not `zkfrost`;
 ///  3. format version not 0x02;
-///  4. key source, network or identifier form not a known value;
+///  4. key source, network (0x00 Mainnet, 0x01 Testnet only) or identifier form not a known value;
 ///  5. payload not exactly the length its key source and identifier form give;
 ///  6. t < 2 or t > n;
 ///  7. identifier 0, or (full form) not a canonical Pallas scalar or an integer from 1 to 255.
+/// Rules 3 and 4 read only the bytes the payload has: a payload that ends before the version, key
+/// source, network or identifier form fails rule 5.
 /// Returns the fields, or the first rule that rejects.
 fn decode(s: &str) -> Result<Payload, Rej> {
     // Rule 1: Bech32m, then the padding of the 8-to-5 bit conversion, before anything is read.
     let (hrp, data5) = bech32m_decode(s).map_err(|e| (1, e))?;
     let p = from_5bit_strict(&data5).map_err(|e| (1, e))?;
+    // `bech32m_decode` lower-cases an all-uppercase string, so the comparison ignores case.
     if hrp != HRP {
         return Err((2, "wrong human-readable part"));
     }
-    if p.first() != Some(&VERSION_2) {
-        return Err((3, "unsupported version"));
+    // Rules 3 and 4 read only the bytes the payload has (text of 2026-11-21): an unknown value that
+    // is present wins; a payload that ends before a byte they read (an empty payload included) has
+    // no value to report and fails rule 5 (length).
+    if let Some(&v) = p.first() {
+        if v != VERSION_2 {
+            return Err((3, "unsupported version"));
+        }
     }
-    // Rule 4 checks only the bytes the payload has (the author's answer, issuecomment-7047445915):
-    // an unknown value that is present wins; a payload that ends before a byte rule 4 reads has
-    // no unknown value to report and fails rule 5 (length).
     if let Some(&ks) = p.get(1) {
         if ![KS_ZIP2005, KS_LEGACY, KS_VIEWING_KEY_ONLY].contains(&ks) {
             return Err((4, "unknown key source"));
         }
     }
     if let Some(&net) = p.get(2) {
-        if ![NET_MAINNET, NET_TESTNET, NET_REGTEST].contains(&net) {
+        if ![NET_MAINNET, NET_TESTNET].contains(&net) {
             return Err((4, "unknown network"));
         }
     }
@@ -350,7 +357,7 @@ fn decode(s: &str) -> Result<Payload, Rej> {
     Ok(Payload { key_source: ks, network: net, t, n, id_form: form, id, share, birthday, sk, key })
 }
 
-/// Restore for key source 0x02, steps of the text of 2026-11-20:
+/// Restore for key source 0x02, steps of the text of 2026-11-20 (unchanged on 2026-11-21):
 ///  1. decode (any decoding rejection; the rejection is reported as step 1);
 ///  2. reject a string whose network is not the wallet's;
 ///  3. reject a signing share that is not a canonical Pallas scalar (and, for 0x00/0x01, an sk that
@@ -701,7 +708,7 @@ fn render(header: &str, fields: &[&str], rows: &[Vec<Value>]) -> String {
     out
 }
 
-const SOURCE: &str = "PROVISIONAL. Generated by frost-member-backup-v2-vectors (Konclave) for key source 0x02 of the version 2 payload in zcash/zips#1413, as revised by its author on 2026-11-20. Not part of zcash/zips#1432. Regenerate if that payload changes.";
+const SOURCE: &str = "PROVISIONAL. Generated by frost-member-backup-v2-vectors (Konclave) for key source 0x02 of the version 2 payload in zcash/zips#1413, as revised by its author on 2026-11-21. Not part of zcash/zips#1432. Regenerate if that payload changes.";
 
 fn ufvk(fvk: &[u8; 96], net: u8) -> Value {
     use zcash_address::unified::{Encoding, Fvk, Revision, Ufvk, Uitem};
@@ -709,7 +716,7 @@ fn ufvk(fvk: &[u8; 96], net: u8) -> Value {
     let nt = match net {
         NET_MAINNET => NetworkType::Main,
         NET_TESTNET => NetworkType::Test,
-        _ => NetworkType::Regtest,
+        _ => unreachable!("only Mainnet and Testnet are network values"),
     };
     let u = Ufvk::try_from_items(Revision::R0, vec![Uitem::Data(Fvk::Orchard(*fvk))]).unwrap();
     Value::String(u.encode(&nt))
@@ -788,10 +795,10 @@ fn main() {
             assert_eq!(rp, p);
             assert_eq!(rfvk.to_bytes(), g.fvk);
             writeln!(log, "group {} member {} {}: {} bytes, {} chars, {} leftover bits, restore ok", g.name, k + 1,
-                ["Mainnet", "Testnet", "Regtest"][net as usize], bytes.len(), s.len(), leftover_bits(bytes.len())).unwrap();
+                ["Mainnet", "Testnet"][net as usize], bytes.len(), s.len(), leftover_bits(bytes.len())).unwrap();
             rows.push(vec![
                 json!(format!("{:#04x}", KS_VIEWING_KEY_ONLY)),
-                json!(["mainnet", "testnet", "regtest"][net as usize]),
+                json!(["mainnet", "testnet"][net as usize]),
                 json!(g.t),
                 json!(g.n),
                 json!(m.id_form),
@@ -877,12 +884,12 @@ fn main() {
     let ks1_no_sk = set_byte(1, KS_LEGACY);
     let id_gt_n = with(&|p| p.id = vec![4]);
     let birthday0 = with(&|p| p.birthday = 0);
-    let regtest = with(&|p| p.network = NET_REGTEST);
+    let net2 = with(&|p| p.network = NET_FORMER_REGTEST);
 
     let neg_one_scalar = (-pallas::Scalar::ONE).to_repr(); // q - 1, the largest canonical scalar
     let mainnet_p = member_payload(&a, m1, NET_MAINNET, BIRTHDAY_MAINNET);
     let mainnet_s = encode_crate(&mainnet_p.to_bytes());
-    let regtest_s = enc(&regtest);
+    let net2_s = enc(&net2);
     let short_hrp = |data: &[u8]| bech32::encode::<bech32::Bech32m>(bech32::Hrp::parse("zkfros").unwrap(), data).unwrap();
     // 5-bit data with a non-zero padding bit, under a given hrp (a string rule 1 rejects)
     let bad_pad_with_hrp = |hrp: &str| encode_5bit(hrp, &nonzero_pad, BECH32M_CONST);
@@ -963,7 +970,6 @@ fn main() {
         ok(base_s.to_ascii_uppercase(), &base_bytes, "valid, uppercase"),
         ok(b1_s.clone(), &b1_bytes, "valid, full identifier (group B member 1, Testnet)"),
         ok(enc(&birthday0), &birthday0, "valid, birthday height 0 (unknown)"),
-        ok(regtest_s.clone(), &regtest, "valid structure, network Regtest"),
         ok(enc(&id_gt_n), &id_gt_n, "decodes: identifier 4 greater than n = 3 is not checked in version 2"),
         ok(enc(&short255), &short255, "decodes: short identifier 255, the largest the short form holds"),
         ok(enc(&full_id(int256)), &full_id(int256), "decodes: full identifier 256, the smallest integer the short form cannot hold"),
@@ -988,6 +994,7 @@ fn main() {
         rej(enc(&v3_ks3_short), 3, "unsupported version", "three rules: version 3, key source 0x03 AND a 138-byte payload; the version is first in order"),
         // ---- rule 4: key source, network or identifier form unknown ----
         rej(enc(&set_byte(1, 0x03)), 4, "unknown key source", "key source 0x03"),
+        rej(net2_s.clone(), 4, "unknown network", "network byte 0x02: only 0x00 Mainnet and 0x01 Testnet are values (no Regtest value)"),
         rej(enc(&set_byte(2, 0x03)), 4, "unknown network", "network 0x03"),
         rej(enc(&set_byte(5, 0x02)), 4, "unknown identifier form", "identifier form 0x02"),
         rej(enc(&ks3_short), 4, "unknown key source", "two rules: key source 0x03 AND a 138-byte payload; the unknown value is first in order"),
@@ -997,6 +1004,7 @@ fn main() {
         rej(enc(&all_unknown), 4, "unknown key source", "key source 0x03, network 0x03 and identifier form 0x02 together"),
         rej(enc(&[0x02, 0x07]), 4, "unknown key source", "payload `02 07`: key source 7 is present and unknown, and wins over the length"),
         // ---- rule 5: exact length ----
+        rej(enc(&[]), 5, "wrong payload length", "empty payload: it ends before the version, so rule 3 has nothing to check"),
         rej(enc(&[0x02]), 5, "wrong payload length", "payload `02` alone: it ends before the key source, so rule 4 has nothing to check"),
         rej(enc(&[0x02, 0x02, 0x01]), 5, "wrong payload length", "payload `02 02 01`: known key source and network, but it ends before the identifier form"),
         rej(enc(&with_sk), 5, "wrong payload length", "key source 0x02 with a 32-byte sk field before the viewing key (171 bytes)"),
@@ -1065,7 +1073,6 @@ fn main() {
     let vs2 = a.members[1].verifying_share;
     let main_net = NET_MAINNET;
     let test_net = NET_TESTNET;
-    let reg_net = NET_REGTEST;
     // (string, wallet network, known verifying share, restore step that rejects, reason)
     type Res = (String, u8, Option<[u8; 32]>, Option<Rej>, String);
     let rok = |s: String, net: u8, vs: Option<[u8; 32]>, why: &str| -> Res { (s, net, vs, None, why.to_string()) };
@@ -1078,17 +1085,13 @@ fn main() {
         rok(base_s.clone(), test_net, None, "valid, verifying shares not known"),
         rok(b1_s.clone(), test_net, Some(b.members[0].verifying_share), "valid, full identifier"),
         rok(mainnet_s.clone(), main_net, Some(vs1), "valid, Mainnet string on a Mainnet wallet"),
-        rok(regtest_s.clone(), reg_net, Some(vs1), "valid, Regtest string on a Regtest wallet"),
         rok(enc(&with(&|p| p.share = neg_share)), test_net, None, "signing share with the wrong sign, verifying share not known: passes the restore, fails at first signing"),
         // ---- step 1: decode ----
         rrej(enc(&base_bytes[..138]), test_net, None, 1, "wrong payload length", "the string does not decode (138-byte payload, decoding rule 5)"),
+        rrej(net2_s.clone(), test_net, None, 1, "unknown network", "the string does not decode (network byte 0x02, decoding rule 4): no wallet restores it"),
         // ---- step 2: network mismatch ----
         rrej(mainnet_s.clone(), test_net, None, 2, "network is not the wallet's", "Mainnet string, Testnet wallet"),
-        rrej(mainnet_s.clone(), reg_net, None, 2, "network is not the wallet's", "Mainnet string, Regtest wallet"),
         rrej(base_s.clone(), main_net, None, 2, "network is not the wallet's", "Testnet string, Mainnet wallet"),
-        rrej(base_s.clone(), reg_net, None, 2, "network is not the wallet's", "Testnet string, Regtest wallet"),
-        rrej(regtest_s.clone(), main_net, None, 2, "network is not the wallet's", "Regtest string, Mainnet wallet: a test string is never restored on a real network"),
-        rrej(regtest_s.clone(), test_net, None, 2, "network is not the wallet's", "Regtest string, Testnet wallet"),
         rrej(enc(&with(&|p| {
             p.network = NET_MAINNET;
             p.share = Q_LE;
@@ -1118,7 +1121,7 @@ fn main() {
         let fvk_out = r.ok().map(|(_, k)| h(&k.to_bytes())).unwrap_or(Value::Null);
         rrows.push(vec![
             json!(s),
-            json!(["mainnet", "testnet", "regtest"][*net as usize]),
+            json!(["mainnet", "testnet"][*net as usize]),
             vs.map(|v| h(&v)).unwrap_or(Value::Null),
             fvk_out,
             rule.map(|(r, _)| json!(r)).unwrap_or(Value::Null),
@@ -1341,16 +1344,26 @@ mod tests {
         assert_eq!(dec_err(&bytes_with(&f, &|b| b[1] = 3)), (4, "unknown key source"));
         assert_eq!(dec_err(&bytes_with(&f, &|b| b[2] = 3)), (4, "unknown network"));
         assert_eq!(dec_err(&bytes_with(&f, &|b| b[5] = 2)), (4, "unknown identifier form"));
+        // no Regtest value since the text of 2026-11-21: 0x02 is an unknown network
+        assert_eq!(dec_err(&bytes_with(&f, &|b| b[2] = NET_FORMER_REGTEST)), (4, "unknown network"));
+        for net in [NET_MAINNET, NET_TESTNET] {
+            assert!(decode(&enc(&bytes_with(&f, &|b| b[2] = net))).is_ok(), "{net}");
+        }
     }
 
     #[test]
     fn rule4_only_checks_the_bytes_present() {
-        // a payload that ends before a byte rule 4 reads fails rule 5, not rule 4
+        // a payload that ends before a byte rules 3 and 4 read fails rule 5, not rule 3 or 4
+        assert_eq!(dec_err(&[]), (5, "wrong payload length"));
         assert_eq!(dec_err(&[0x02]), (5, "wrong payload length"));
+        assert_eq!(dec_err(&[0x02, 0x02]), (5, "wrong payload length"));
         assert_eq!(dec_err(&[0x02, 0x02, 0x01]), (5, "wrong payload length"));
         // an unknown value that is present still wins over the length
         assert_eq!(dec_err(&[0x02, 0x07]), (4, "unknown key source"));
         assert_eq!(dec_err(&[0x02, 0x02, 0x07]), (4, "unknown network"));
+        assert_eq!(dec_err(&[0x02, 0x02, NET_FORMER_REGTEST]), (4, "unknown network"));
+        // a present version other than 0x02 still fails rule 3, however short
+        assert_eq!(dec_err(&[0x01]), (3, "unsupported version"));
     }
 
     #[test]
@@ -1447,14 +1460,15 @@ mod tests {
     fn restore_network_mismatch_each_network() {
         let f = fx();
         let m1 = &f.a.members[0];
-        for (s_net, w_net) in [
-            (NET_MAINNET, NET_TESTNET), (NET_MAINNET, NET_REGTEST),
-            (NET_TESTNET, NET_MAINNET), (NET_TESTNET, NET_REGTEST),
-            (NET_REGTEST, NET_MAINNET), (NET_REGTEST, NET_TESTNET),
-        ] {
+        for (s_net, w_net) in [(NET_MAINNET, NET_TESTNET), (NET_TESTNET, NET_MAINNET)] {
             let s = enc(&payload_a(&f, s_net).to_bytes());
             assert_eq!(restore(&s, w_net, Some(&m1.verifying_share)).err(), Some((2, "network is not the wallet's")), "{s_net} on {w_net}");
             assert!(restore(&s, s_net, Some(&m1.verifying_share)).is_ok(), "{s_net} on its own network");
+        }
+        // a string with network byte 0x02 does not decode, so no wallet restores it
+        let s = enc(&payload_a(&f, NET_FORMER_REGTEST).to_bytes());
+        for w_net in [NET_MAINNET, NET_TESTNET, NET_FORMER_REGTEST] {
+            assert_eq!(restore(&s, w_net, None).err(), Some((1, "unknown network")), "{w_net}");
         }
     }
 

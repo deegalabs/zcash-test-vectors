@@ -40,7 +40,7 @@ for v in load("frost_member_backup_v2_ks02.json"):
     hrp, p = py_decode(s)
     assert hrp == "zkfrost" and p == payload
     assert bech32_encode("zkfrost", convertbits(payload, 8, 5), Encoding.BECH32M) == s
-    # field layout, as written on 2026-11-18 and 2026-11-20
+    # field layout, as written on 2026-11-18 and revised on 2026-11-20 and 2026-11-21
     assert p[0] == 0x02 and p[1] == 0x02
     assert p[2] == {"mainnet": 0, "testnet": 1}[v["network"]]
     assert (p[3], p[4], p[5]) == (v["t"], v["n"], v["identifier_form"])
@@ -83,12 +83,12 @@ for key, members in groups.items():
 print(f"python cross-check: {checked} valid vectors decode, re-encode and verify "
       f"(ak point, sign bit, nk/rivk canonical, ivk, verifying shares, pair interpolation, UFVK)")
 
-NETS = {"mainnet": 0, "testnet": 1, "regtest": 2}
+NETS = {"mainnet": 0, "testnet": 1}  # no Regtest value since the text of 2026-11-21
 LENGTHS = {(0, 0): 107, (0, 1): 138, (1, 0): 107, (1, 1): 138, (2, 0): 139, (2, 1): 170}
 
 
 def py_rule(s):
-    """The decoding rules of the text of 2026-11-20, in its order, written again here in Python.
+    """The decoding rules of the text of 2026-11-21, in its order, written again here in Python.
     Returns (None, payload) when the string decodes, or (rule number, None)."""
     hrp, data, spec = bech32_decode(s)  # case, charset, checksum
     if hrp is None or spec != Encoding.BECH32M:
@@ -99,10 +99,10 @@ def py_rule(s):
     p = bytes(payload)
     if hrp != "zkfrost":
         return 2, None
-    if p[:1] != b"\x02":
+    # rules 3 and 4 read only the bytes the payload has; a payload that ends before one fails rule 5
+    if len(p) > 0 and p[0] != 0x02:
         return 3, None
-    # rule 4 checks only the bytes the payload has; a payload that ends before one fails rule 5
-    if (len(p) > 1 and p[1] > 2) or (len(p) > 2 and p[2] > 2) or (len(p) > 5 and p[5] > 1):
+    if (len(p) > 1 and p[1] > 2) or (len(p) > 2 and p[2] > 1) or (len(p) > 5 and p[5] > 1):
         return 4, None
     if len(p) < 6:
         return 5, None
